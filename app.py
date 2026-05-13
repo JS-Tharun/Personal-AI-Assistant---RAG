@@ -75,6 +75,6 @@ while True:
 
     try:
         response = qa_chain.invoke(query)
-        print("Bot:", response, "\n")
+        print("Bot:", response['result'], "\n")
     except Exception as e:
         print("❌ Error:", e)
