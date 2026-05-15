@@ -13,5 +13,6 @@ dependencies = [
     "langchain-openai>=1.2.1",
     "langchainhub>=0.1.21",
     "llama-index>=0.14.21",
+    "pypdf>=6.11.0",
     "rich>=15.0.0",
 ]
