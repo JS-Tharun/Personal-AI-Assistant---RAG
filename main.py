@@ -7,24 +7,26 @@ from langchain_community import embeddings
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_experimental.text_splitter import SemanticChunker
+from langchain_ollama.embeddings import OllamaEmbeddings
 
 
 local_llm = OllamaLLM(model='mistral')
 
 # RAG
-
 def rag(chunks, collection_name):
     vector_store = Chroma.from_documents(
-        documents=documents,
+        documents=chunks,
         collection_name=collection_name,
         embedding=OllamaEmbeddings(model='nomic-embed-text')
     )
 
     retriever = vector_store.as_retriever()
 
-    prompt_template = """Answer the question based only on the following context:
+    prompt_template = """Answer the question like reading from a text book, based only on the following context:
     {context}
-    Question: {questions}
+    Question: {question}
     """
     prompt = ChatPromptTemplate.from_template(prompt_template)
 
@@ -38,10 +40,36 @@ def rag(chunks, collection_name):
         | StrOutputParser()
     )
 
-    result = chain.invoke("What is the use of Text Splitting?")
-    print(result)
 
-# 1. Character Text Splitting
+    query = input('You: ')
+    if query.lower() in ['exit', 'quit', 'q']:
+        return None
+
+    try:
+        
+        result = chain.invoke(query)
+        return result
+    
+    except Exception as e:
+        print("Error: ", e)
+
+
+loader = PyPDFLoader("data/BIG Data Analytics.pdf")
+docs = loader.load()
+text_splitter = SemanticChunker(
+    OllamaEmbeddings(model='nomic-embed-text'), 
+    breakpoint_threshold_type="percentile"
+)
+
+documents = text_splitter.split_documents(docs)
+while True:
+    answer = rag(documents, "Semantic-Chunking")
+    if answer == None:
+        break
+    else:
+        print(answer)
+
+"""# 1. Character Text Splitting
 print("### Character Text Splitting")
 
 text = "Text splitting in Langchain is a critical feature that facilitates the division of large texts into smaller, manageable segments. "
@@ -117,12 +145,12 @@ from langchain_classic.text_splitter import RecursiveCharacterTextSplitter, Lang
 
 javascript_text = """
 
-// Function is called, the return value will end up in x
+"""// Function is called, the return value will end up in x
 let x = myFunction(4,3)
 
 function myFunction(a,b) {
     return a * b;
-}
+}"""
 
 """
 
@@ -132,23 +160,9 @@ js_splitter = RecursiveCharacterTextSplitter.from_language(
     chunk_overlap=0
 )
 
-print(js_splitter.create_documents([javascript_text]))
+print(js_splitter.create_documents([javascript_text]))"""
 
 
 
 
-# 4. Semantic chunking
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_experimental.text_splitter import SemanticChunker
-from langchain_ollama.embeddings import OllamaEmbeddings
 
-
-loader = PyPDFLoader("data/BIG Data Analytics.pdf")
-docs = loader.load()
-text_splitter = SemanticChunker(
-    OllamaEmbeddings(model='nomic-embed-text'), 
-    breakpoint_threshold_type="percentile"
-)
-
-documents = text_splitter.split_documents(docs)
-print(documents)
