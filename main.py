@@ -24,7 +24,7 @@ def rag(chunks, collection_name):
 
     retriever = vector_store.as_retriever()
 
-    prompt_template = """Answer the question like reading from a text book, based only on the following context:
+    prompt_template = """Answer the question like reading from a text book, based only on the following context (dont mention based on the context in the answer):
     {context}
     Question: {question}
     """
