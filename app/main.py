@@ -24,12 +24,20 @@ st.set_page_config(
 
 @st.cache_resource
 def ollama_llm():
-    llm = OllamaLLM(model='mistral')
+    llm = OllamaLLM(
+        model='mistral',
+        #base_url="http://host.docker.internal:11434" # For local docker container runtime
+        #base_url="http://172.17.0.1:11434" # Docker bridge IP (AWS)
+    )
     return llm
 
 @st.cache_resource
 def embedding():
-    embed = OllamaEmbeddings(model='nomic-embed-text')
+    embed = OllamaEmbeddings(
+        model='nomic-embed-text',
+        #base_url="http://host.docker.internal:11434" # For local docker container runtime
+        #base_url="http://172.17.0.1:11434" # Docker bridge IP (AWS)
+    )
     return embed
 
 @st.cache_resource
