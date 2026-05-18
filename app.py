@@ -197,11 +197,13 @@ with st.sidebar:
 
 st.title("QA Chatbot")
 
-def rag(chunks, collection_name, question):
+def rag(question):
+    if "vector_store" not in st.session_state:
+        return None
+
     local_llm = ollama_llm()
-    vec_store = vector_store(chunks, collection_name)
-    retriever = vec_store.as_retriever(
-        search_kwargs={'k':6}
+    retriever = st.session_state.vector_store.as_retriever(
+        search_kwargs={'k': 6}
     )
 
     prompt_template = """Answer the question like reading from a text book, based only on the following context, without saying "Based on the context provided":
@@ -221,14 +223,60 @@ def rag(chunks, collection_name, question):
     )
 
     query = str(question)
-    
+
     if query.lower() in ['exit', 'quit', 'q']:
         return None
 
     try:
-        
         result = chain.invoke(query)
         return result
-    
     except Exception as e:
-        return e    
+        return str(e)
+
+
+# --------------------------------------------------------------------------------
+# Chat Interface
+# --------------------------------------------------------------------------------
+
+scanned_files = st.session_state.get("scanned_files", [])
+
+if scanned_files:
+    # Show scanned files
+    st.subheader("📂 Scanned Files")
+    for file in scanned_files:
+        st.markdown(f"- `{file}`")
+
+    st.divider()
+
+    # Initialize chat history
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
+
+    # Render chat history
+    for message in st.session_state.chat_history:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    # Chat input
+    user_input = st.chat_input("Ask a question about your documents...")
+
+    if user_input:
+        # Display user message
+        with st.chat_message("user"):
+            st.markdown(user_input)
+        st.session_state.chat_history.append({"role": "user", "content": user_input})
+
+        # Generate and display assistant response
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking..."):
+                response = rag(user_input)
+
+            if response is None:
+                response = "Sorry, I couldn't find an answer based on the uploaded documents."
+
+            st.markdown(response)
+
+        st.session_state.chat_history.append({"role": "assistant", "content": response})
+
+else:
+    st.warning("No files scanned yet. Please upload your files in the sidebar and click **Upload and Scan** to get started.") 
