@@ -41,10 +41,10 @@ def semantic_chunker():
     )
     return splitter
 
-@st.cache_resource
-def vector_store(_chunks, collection_name):
+
+def vector_store(chunks, collection_name):
     store = Chroma.from_documents(
-        documents=_chunks,
+        documents=chunks,
         collection_name=collection_name,
         embedding=embedding()
     )
@@ -57,7 +57,7 @@ def vector_store(_chunks, collection_name):
 # ---------------------------------------------------------------------------
 
 
-@st.cache_data(show_spinner="Processing documents...")
+
 def process_documents(file_bytes_map: dict[str, bytes]):
     all_documents = []
     for file, file_bytes in file_bytes_map.items():
@@ -144,13 +144,48 @@ with st.sidebar:
     )
     scan_button = st.button("Upload and Scan")
 
-
     if st.session_state.uploaded_files and scan_button:
         file_bytes_map = {f.name: f.read() for f in file_uploader}
-        docs = process_documents(file_bytes_map)
-        st.session_state.langchain_docs = docs
-        st.session_state.scanned_files = list(file_bytes_map.keys())
-        st.success(f"Uploaded scaned {len(file_uploader)} documents")
+
+        if file_bytes_map != st.session_state.get("last_file_bytes_map"):
+            
+            last_file_bytes_map = st.session_state.get("last_file_bytes_map", {})
+
+            # Find files that are retained, new, and removed
+            retained_files = {f for f in file_bytes_map if f in last_file_bytes_map}
+            new_files = {f for f in file_bytes_map if f not in last_file_bytes_map}
+            
+            if not retained_files:
+                # No common files — wipe the entire vector store
+                if "vector_store" in st.session_state:
+                    st.session_state.vector_store.delete_collection()
+                    del st.session_state.vector_store
+
+                docs = process_documents(file_bytes_map)
+                st.session_state.vector_store = vector_store(
+                    docs,
+                    collection_name=f"session_{st.session_state.get('session_id', 'default')}"
+                )
+                st.session_state.langchain_docs = docs
+
+            elif new_files:
+                # Some files are retained — only process and add new files
+                new_file_bytes_map = {f: file_bytes_map[f] for f in new_files}
+                new_docs = process_documents(new_file_bytes_map)
+
+                st.session_state.vector_store.add_documents(new_docs)
+                st.session_state.langchain_docs = st.session_state.langchain_docs + new_docs
+
+            else:
+                # All uploaded files already exist in vector store — do nothing
+                st.info("All uploaded files are already scanned. Nothing to update.")
+
+            st.session_state.scanned_files = list(file_bytes_map.keys())
+            st.session_state.last_file_bytes_map = file_bytes_map
+            st.write(st.session_state.scanned_files)
+            st.write(st.session_state.last_file_bytes_map)
+
+        st.success(f"Uploaded and scanned {len(file_uploader)} documents")
 
 
 
@@ -163,11 +198,11 @@ with st.sidebar:
 st.title("QA Chatbot")
 
 def rag(chunks, collection_name, question):
-    
-
     local_llm = ollama_llm()
     vec_store = vector_store(chunks, collection_name)
-    retriever = vec_store.as_retriever()
+    retriever = vec_store.as_retriever(
+        search_kwargs={'k':6}
+    )
 
     prompt_template = """Answer the question like reading from a text book, based only on the following context, without saying "Based on the context provided":
     {context}
@@ -196,26 +231,4 @@ def rag(chunks, collection_name, question):
         return result
     
     except Exception as e:
-        return e
-
-
-if not st.session_state.uploaded_files and not st.session_state.langchain_docs:
-    st.write("Scan and Upload Documents to the Chatbot")
-
-elif st.session_state.langchain_docs:
-    st.info("Scanned Documents")
-    for scanned_files in st.session_state.scanned_files:
-        st.write(scanned_files)
-    st.write(st.session_state.langchain_docs)
-
-
-    user_input = st.text_input("Ask the bot")
-    send_button = st.button("Send")
-
-    if user_input and send_button:
-        answer = rag(chunks=st.session_state.langchain_docs, collection_name='recursive', question=str(input))
-        st.write(answer)
-    
-
-
-    
+        return e    
