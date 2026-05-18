@@ -1,30 +1,214 @@
-from rich import print
-from langchain_core.documents import Document
-from langchain_ollama import OllamaEmbeddings
+import streamlit as st
+import os
+import io
+import tempfile
+import pandas as pd
+from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader
+from langchain_classic.schema import Document
+from langchain_experimental.text_splitter import SemanticChunker
+from langchain_classic.text_splitter import RecursiveCharacterTextSplitter
+from langchain_ollama.embeddings import OllamaEmbeddings
 from langchain_ollama import OllamaLLM
-from langchain_community.vectorstores import Chroma
-from langchain_community import embeddings
+from langchain_ollama import OllamaEmbeddings
+from langchain_community.vectorstores import FAISS, Chroma
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_experimental.text_splitter import SemanticChunker
-from langchain_ollama.embeddings import OllamaEmbeddings
 
 
-local_llm = OllamaLLM(model='mistral')
 
-# RAG
-def rag(chunks, collection_name):
-    vector_store = Chroma.from_documents(
+st.set_page_config(
+    page_title="QA Chatbot",
+    layout='wide'
+)
+
+@st.cache_resource
+def ollama_llm():
+    llm = OllamaLLM(model='mistral')
+    return llm
+
+@st.cache_resource
+def embedding():
+    embed = OllamaEmbeddings(model='nomic-embed-text')
+    return embed
+
+@st.cache_resource
+def semantic_chunker():
+    embed = embedding()
+    splitter = SemanticChunker(
+        embed,
+        breakpoint_threshold_type='percentile'
+    )
+    return splitter
+
+
+def vector_store(chunks, collection_name):
+    store = Chroma.from_documents(
         documents=chunks,
         collection_name=collection_name,
-        embedding=OllamaEmbeddings(model='nomic-embed-text')
+        embedding=embedding()
+    )
+    return store
+
+
+
+
+# ---------------------------------------------------------------------------
+# File Upload and Chunking (in Sidebar)
+# ---------------------------------------------------------------------------
+
+
+
+def process_documents(file_bytes_map: dict[str, bytes]):
+    all_documents = []
+    for file, file_bytes in file_bytes_map.items():
+        file_extension = file.split(".")[-1]
+
+        # -------------------------
+        # PDF and Docx temp file
+        # -------------------------
+        if file_extension in ['pdf','docx']:
+            # Creating temporary file
+            with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_extension}") as temp_file:
+                temp_file.write(file_bytes)
+                temp_path = temp_file.name
+
+            try:
+                if file_extension == "pdf":
+                    loader = PyPDFLoader(temp_path)
+                    docs = loader.load()
+
+                elif file_extension == 'docx':
+                    loader = Docx2txtLoader(temp_path)
+                    docs = loader.load()
+                
+                all_documents.extend(docs)
+
+            finally:
+                
+                os.remove(temp_path)
+
+
+        # ------------------------
+        # CSV
+        # ------------------------
+        elif file_extension == "csv":
+            df = pd.read_csv(io.BytesIO(file_bytes))
+            documents = []
+
+            for _, row in df.iterrows():
+                text = " ".join([str(value) for value in row.values])
+                documents.append(Document(
+                    page_content=text
+                ))
+
+            all_documents.extend(documents)
+
+        # -------------------------
+        # Excel
+        # -------------------------
+        elif file_extension == 'xlsx':
+            excel_data = pd.read_excel(io.BytesIO(file_bytes), sheet_name=None)
+            documents = []
+            for sheet_name, df in excel_data.items():
+                for _, row in df.iterrows():
+                    text = " ".join([str(value) for value in row.values])
+                    documents.append(
+                        Document(
+                            page_content=text,
+                            metadata={"sheet": sheet_name}
+                        )
+                    )
+            all_documents.extend(documents)
+
+    #text_splitter = semantic_chunker()
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    documents = text_splitter.split_documents(all_documents)
+
+    return documents
+
+    
+
+if "langchain_docs" not in st.session_state:
+    st.session_state.langchain_docs = []
+
+if "scanned_files" not in st.session_state:
+    st.session_state.scanned_files = []
+
+
+with st.sidebar:
+    file_uploader = st.file_uploader(
+        label='Upload file here',
+        type=['pdf', 'docx', 'csv','xlsx'],
+        accept_multiple_files=True,
+        key='uploaded_files'
+    )
+    scan_button = st.button("Upload and Scan")
+
+    if st.session_state.uploaded_files and scan_button:
+        file_bytes_map = {f.name: f.read() for f in file_uploader}
+
+        if file_bytes_map != st.session_state.get("last_file_bytes_map"):
+            
+            last_file_bytes_map = st.session_state.get("last_file_bytes_map", {})
+
+            # Find files that are retained, new, and removed
+            retained_files = {f for f in file_bytes_map if f in last_file_bytes_map}
+            new_files = {f for f in file_bytes_map if f not in last_file_bytes_map}
+            
+            if not retained_files:
+                # No common files — wipe the entire vector store
+                if "vector_store" in st.session_state:
+                    st.session_state.vector_store.delete_collection()
+                    del st.session_state.vector_store
+                
+                # Clear chat history since documents have changed
+                st.session_state.chat_history = []
+
+                docs = process_documents(file_bytes_map)
+                st.session_state.vector_store = vector_store(
+                    docs,
+                    collection_name=f"session_{st.session_state.get('session_id', 'default')}"
+                )
+                st.session_state.langchain_docs = docs
+
+            elif new_files:
+                # Some files are retained — only process and add new files
+                new_file_bytes_map = {f: file_bytes_map[f] for f in new_files}
+                new_docs = process_documents(new_file_bytes_map)
+
+                st.session_state.vector_store.add_documents(new_docs)
+                st.session_state.langchain_docs = st.session_state.langchain_docs + new_docs
+
+            else:
+                # All uploaded files already exist in vector store — do nothing
+                st.info("All uploaded files are already scanned. Nothing to update.")
+
+            st.session_state.scanned_files = list(file_bytes_map.keys())
+            st.session_state.last_file_bytes_map = file_bytes_map
+
+        st.success(f"Uploaded and scanned {len(file_uploader)} documents")
+
+
+
+
+
+# --------------------------------------------------------------------------------
+# RAG
+# --------------------------------------------------------------------------------
+
+st.title("QA Chatbot")
+
+def rag(question):
+    if "vector_store" not in st.session_state:
+        return None
+
+    local_llm = ollama_llm()
+    retriever = st.session_state.vector_store.as_retriever(
+        search_kwargs={'k': 6}
     )
 
-    retriever = vector_store.as_retriever()
-
-    prompt_template = """Answer the question like reading from a text book, based only on the following context (dont mention based on the context in the answer):
+    prompt_template = """Answer the question like reading from a text book, based only on the following context, without saying "Based on the context provided":
     {context}
     Question: {question}
     """
@@ -40,129 +224,62 @@ def rag(chunks, collection_name):
         | StrOutputParser()
     )
 
+    query = str(question)
 
-    query = input('You: ')
     if query.lower() in ['exit', 'quit', 'q']:
         return None
 
     try:
-        
         result = chain.invoke(query)
         return result
-    
     except Exception as e:
-        print("Error: ", e)
-
-
-loader = PyPDFLoader("data/BIG Data Analytics.pdf")
-docs = loader.load()
-text_splitter = SemanticChunker(
-    OllamaEmbeddings(model='nomic-embed-text'), 
-    breakpoint_threshold_type="percentile"
-)
-
-documents = text_splitter.split_documents(docs)
-while True:
-    answer = rag(documents, "Semantic-Chunking")
-    if answer == None:
-        break
-    else:
-        print(answer)
-
-"""# 1. Character Text Splitting
-print("### Character Text Splitting")
-
-text = "Text splitting in Langchain is a critical feature that facilitates the division of large texts into smaller, manageable segments. "
-
-# Manual Splitting
-chunks = []
-chunk_size = 35
-for i in range(0, len(text), chunk_size):
-    chunk = text[i:i + chunk_size]
-    chunks.append(chunk)
-
-documents = [Document(page_content=chunk, metadata={'source': "local"}) for chunk in chunks]
-print(documents)
-
-
-# Automatic Splitting
-from langchain_classic.text_splitter import CharacterTextSplitter
-text_splitter = CharacterTextSplitter(
-    chunk_size=35,
-    chunk_overlap=0,
-    separator='',
-    strip_whitespace=False
-)
-documents = text_splitter.create_documents([text])
-print(documents)
+        return str(e)
 
 
 
-# 2. Recursive Character Text Splitting
-from langchain_classic.text_splitter import RecursiveCharacterTextSplitter
-text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size = 500, 
-    chunk_overlap=0
-) # ["\n\n", "\n", " ", ""] 65,450
-print(text_splitter.create_documents([text]))
+# --------------------------------------------------------------------------------
+# Chat Interface
+# --------------------------------------------------------------------------------
 
+scanned_files = st.session_state.get("scanned_files", [])
 
+if scanned_files:
+    # Show scanned files
+    st.subheader("📂 Scanned Files")
+    for file in scanned_files:
+        st.markdown(f"- `{file}`")
 
+    st.divider()
 
-# 3. Document Specific Splitting
+    # Initialize chat history
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
 
-# Markdown file splitting
-from langchain_classic.text_splitter import MarkdownTextSplitter
-with open('sample.md', 'r', encoding='utf-8') as file:
-    markdown_text = file.read()
+    # Render chat history
+    for message in st.session_state.chat_history:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
 
-splitter = MarkdownTextSplitter(
-    chunk_size=500,
-    chunk_overlap=0
-)
+    # Chat input
+    user_input = st.chat_input("Ask a question about your documents...")
 
-print(splitter.create_documents([markdown_text]))
+    if user_input:
+        # Display user message
+        with st.chat_message("user"):
+            st.markdown(user_input)
+        st.session_state.chat_history.append({"role": "user", "content": user_input})
 
+        # Generate and display assistant response
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking..."):
+                response = rag(user_input)
 
+            if response is None:
+                response = "Sorry, I couldn't find an answer based on the uploaded documents."
 
-# Python file splitting
-from langchain_classic.text_splitter import PythonCodeTextSplitter
+            st.markdown(response)
 
-with open('main.py', 'r', encoding='utf-8') as file:
-    python_text = file.read()
+        st.session_state.chat_history.append({"role": "assistant", "content": response})
 
-python_splitter = PythonCodeTextSplitter(
-    chunk_size=1000,
-    chunk_overlap=30
-)
-print(python_splitter.create_documents([python_text]))
-
-
-
-
-# Javascript file
-from langchain_classic.text_splitter import RecursiveCharacterTextSplitter, Language
-
-javascript_text = """
-
-"""// Function is called, the return value will end up in x
-let x = myFunction(4,3)
-
-function myFunction(a,b) {
-    return a * b;
-}"""
-
-"""
-
-js_splitter = RecursiveCharacterTextSplitter.from_language(
-    language=Language.JS,
-    chunk_size=65,
-    chunk_overlap=0
-)
-
-print(js_splitter.create_documents([javascript_text]))"""
-
-
-
-
-
+else:
+    st.warning("Please upload your files in the sidebar and click **Upload and Scan** to get started.") 
