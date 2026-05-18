@@ -137,6 +137,9 @@ if "scanned_files" not in st.session_state:
 
 
 with st.sidebar:
+    st.header("Upload documents")
+    st.caption("Supported formats: PDF, DOCX, CSV, XLSX. Upload one or more files and click Upload and Scan to build the knowledge base.")
+
     file_uploader = st.file_uploader(
         label='Upload file here',
         type=['pdf', 'docx', 'csv','xlsx'],
@@ -239,7 +242,8 @@ def rag(question):
 # Chat Interface
 # --------------------------------------------------------------------------------
 
-st.title("QA Chatbot")
+st.title("🤖 QA Chatbot")
+st.caption("Ask questions about the content of your uploaded documents. The chatbot answers using only scanned document context.")
 
 scanned_files = st.session_state.get("scanned_files", [])
 
