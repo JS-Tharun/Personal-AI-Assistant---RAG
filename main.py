@@ -197,8 +197,6 @@ with st.sidebar:
 # RAG
 # --------------------------------------------------------------------------------
 
-st.title("QA Chatbot")
-
 def rag(question):
     if "vector_store" not in st.session_state:
         return None
@@ -240,6 +238,8 @@ def rag(question):
 # --------------------------------------------------------------------------------
 # Chat Interface
 # --------------------------------------------------------------------------------
+
+st.title("QA Chatbot")
 
 scanned_files = st.session_state.get("scanned_files", [])
 
