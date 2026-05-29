@@ -51,9 +51,9 @@ def semantic_chunker():
 
 
 def vector_store(chunks, collection_name):
-    store = FAISS.from_documents(
+    store = Chroma.from_documents(
         documents=chunks,
-        #collection_name=collection_name,
+        collection_name=collection_name,
         embedding=embedding()
     )
     return store
@@ -214,7 +214,7 @@ def rag(question):
 
     local_llm = ollama_llm()
     retriever = st.session_state.vector_store.as_retriever(
-        search_kwargs={'k': 6}
+        search_kwargs={'k': 20}
     )
 
     prompt_template = """Answer the question like reading from a text book, based only on the following context, without saying "Based on the context provided":
