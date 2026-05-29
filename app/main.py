@@ -18,7 +18,7 @@ from langchain_core.output_parsers import StrOutputParser
 
 
 st.set_page_config(
-    page_title="QA Chatbot",
+    page_title="AI Document Assistant",
     layout='wide'
 )
 
@@ -51,9 +51,9 @@ def semantic_chunker():
 
 
 def vector_store(chunks, collection_name):
-    store = Chroma.from_documents(
+    store = FAISS.from_documents(
         documents=chunks,
-        collection_name=collection_name,
+        #collection_name=collection_name,
         embedding=embedding()
     )
     return store
@@ -250,7 +250,7 @@ def rag(question):
 # Chat Interface
 # --------------------------------------------------------------------------------
 
-st.title("🤖 QA Chatbot")
+st.title("🤖 AI Document Assistant")
 st.caption("Ask questions about the content of your uploaded documents. The chatbot answers using only scanned document context.")
 
 scanned_files = st.session_state.get("scanned_files", [])
